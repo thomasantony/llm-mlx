@@ -240,12 +240,18 @@ class MlxModel(llm.Model):
         # Add tool results from current prompt if any
         if prompt.tool_results:
             for tool_result in prompt.tool_results:
-                messages.append({
+                message ={
                     "role": "tool",  # Template should convert to ipython for llama3.x
                     "name": tool_result.name,
                     "tool_call_id": tool_result.tool_call_id,
                     "content": json.loads(tool_result.output),
-                })
+                }
+                # Qwen 3 format requires JSON string in content
+                if self._tool_format == "qwen3":
+                    message["content"] = json.dumps(tool_result.output)
+                messages.append(message)
+                if DEBUG:
+                    print("Tool result added:", tool_result.name, tool_result.output)  # Debug output
         
         # Add current user message (unless we're just adding tool results)
         if not prompt.tool_results:
@@ -265,6 +271,8 @@ class MlxModel(llm.Model):
             # Analyze template content for format markers (like llama.cpp does)
             if "<｜tool▁calls▁begin｜>" in template_str:
                 return "deepseek_r1"
+            elif "qwen" in self.model_path.lower():
+                return "qwen3"  # Qwen often uses <tool_call> format
             elif "<tool_call>" in template_str:
                 return "hermes"
             elif "<|start_header_id|>ipython<|end_header_id|>" in template_str:
@@ -278,8 +286,6 @@ class MlxModel(llm.Model):
             # Additional patterns for better detection
             elif "llama" in self.model_path.lower() and ("3.2" in self.model_path or "3.1" in self.model_path):
                 return "llama3x"
-            elif "qwen" in self.model_path.lower():
-                return "hermes"  # Qwen often uses <tool_call> format
             elif "mistral" in self.model_path.lower() and "nemo" in self.model_path.lower():
                 return "mistral_nemo"
             else:
@@ -296,6 +302,10 @@ class MlxModel(llm.Model):
                 (r'\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"parameters"\s*:\s*(\{[^}]*\})\s*\}', 'llama3x'),
                 # Also handle "arguments" variant
                 (r'\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"arguments"\s*:\s*(\{[^}]*\})\s*\}', 'llama3x_args'),
+            ],
+            "qwen3": [
+                # Qwen 3 format: <tool_call>{"name": "func", "arguments": {...}}</tool_call>
+                (r'<tool_call>\s*\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"arguments"\s*:\s*(\{[^}]*\})\s*\}\s*</tool_call>', 'qwen3'),
             ],
             "hermes": [
                 # Hermes XML format: <tool_call>{"name": "func", "arguments": {...}}</tool_call>
